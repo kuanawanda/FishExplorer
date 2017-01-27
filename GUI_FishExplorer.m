@@ -16,22 +16,16 @@ General internal functions are at the end, some specialized .m functions are out
 
 Written in Matlab R2016a (with ___ toolboxes) running on Windows 7.
 
-- Xiuye Chen (xiuyechen@gmail.com), Engert Lab, Spring 2016
+- Xiuye Chen (xiuyechen@gmail.com), Engert Lab, 2016
 %}
 
 %% User Interface:
 function [hfig,fcns] = GUI_FishExplorer()%data_masterdir)
-global data_masterdir name_MASKs name_ReferenceBrain VAR;
-% name_ClusterBook = 'VAR_current.mat';
-% name_MASKs = 'MaskDatabase.mat';
-% name_ReferenceBrain = 'ReferenceBrain.mat';
-% 
-% VAR = load(fullfile(data_masterdir,name_MASKs));
-
 %% Make figure
 scrn = get(0,'Screensize');
 hfig = figure('Position',[scrn(3)*0.2 scrn(4)*0.05 scrn(3)*0.75 scrn(4)*0.86],...% [50 100 1700 900]
     'Name','GUI_LSh','DeleteFcn',@closefigure_Callback,...
+    'KeyPressFcn',@KeyPressCallback,...    
     'ToolBar', 'none'); % 'MenuBar', 'none'
 hold off; axis off
 
@@ -41,39 +35,13 @@ hm1 = uimenu(hfig,'Label','My File');
 hm1_1 = uimenu(hm1,'Label','Quick save to workspace');
 hm1_2 = uimenu(hm1,'Label','Save to file (default path)');
 
-%% Folder setup
-% directory for full fish data (.mat)
-setappdata(hfig,'data_masterdir',data_masterdir);
+%% general setup (import external data, initialize all GUI flags etc)
+InitializeAppData(hfig); % (stored under main figure handle appdata)
+M_fish_set = getappdata(hfig,'M_fish_set');
+nFish = length(M_fish_set);
 
-%% Pass external variables into appdata (stored with main figure handle)
-setappdata(hfig,'VAR',VAR);
-nFish = length(VAR);
-
-%% Load ZBrain Atlas
-if exist(fullfile(data_masterdir,name_MASKs),'file') ...
-        && exist(fullfile(data_masterdir,name_ReferenceBrain),'file'),
-    
-    % load masks for ZBrain Atlas
-    MASKs = load(fullfile(data_masterdir,name_MASKs));
-    setappdata(hfig,'MASKs',MASKs);
-    % load reference brain image stack with the 3 projections
-    load(fullfile(data_masterdir,name_ReferenceBrain));
-    setappdata(hfig,'anat_stack_norm',anat_stack_norm);
-    setappdata(hfig,'anat_yx_norm',anat_yx_norm);
-    setappdata(hfig,'anat_yz_norm',anat_yz_norm);
-    setappdata(hfig,'anat_zx_norm',anat_zx_norm);
-end
-
-%% fish protocol sets (different sets have different parameters)
-M_fish_set = [1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3]; % M = Matrix
-setappdata(hfig,'M_fish_set',M_fish_set);
-
-%% parameters / constants
-setappdata(hfig,'z_res',19.7); % resoltion in z, um per slice
-% fpsec = 1.97; % hard-coded in ext function 'GetStimRegressor.m'
-% approx fpsec of 2 used in ext function 'DrawCluster.m'
-
-% cache
+%% setup for GUI
+% GUI cache
 bCache = []; % Cache for going b-ack (bad abbr)
 fCache = []; % Cache for going f-orward
 bCache.cIX = cell(1,1);
@@ -84,47 +52,6 @@ fCache.gIX = cell(1,1);
 fCache.numK = cell(1,1);
 setappdata(hfig,'bCache',bCache);
 setappdata(hfig,'fCache',fCache);
-
-%% Initialize internal params into appdata
-
-% thresholds
-thres_merge = 0.9;
-thres_split = 0.7;
-thres_reg = 0.7;
-thres_size = 10;
-thres_ttest = 0.001;
-setappdata(hfig,'thres_merge',thres_merge);
-setappdata(hfig,'thres_split',thres_split); % for function 'pushbutton_iter_split'
-setappdata(hfig,'thres_reg',thres_reg); % regression threshold, ~correlation coeff
-setappdata(hfig,'thres_size',thres_size); % min size for clusters
-setappdata(hfig,'thres_ttest',thres_ttest); % min size for clusters
-
-% variables
-% (not sure all these need to be initialized, probably not complete either)
-setappdata(hfig,'clrmap','hsv');
-setappdata(hfig,'opID',0);
-setappdata(hfig,'rankID',0);
-setappdata(hfig,'isPlotLines',0);
-setappdata(hfig,'isPlotBehavior',1);
-setappdata(hfig,'rankscore',[]);
-setappdata(hfig,'isCentroid',0);
-setappdata(hfig,'isWkmeans',1); % in autoclustering, with/without kmeans
-setappdata(hfig,'regchoice',{1,1}); % regressor choice; first cell,1=stim,2=motor,3=centroid
-% setappdata(hfig,'isfullfish',0); % no if QuickUpdateFish, yes if LoadFullFish
-setappdata(hfig,'isPlotCorrHist',0); % option for regression
-setappdata(hfig,'isPlotReg',1); % plot regressor when selecting it
-setappdata(hfig,'hierinplace',1); % hier. partitioning, no reordering
-setappdata(hfig,'isAvr',1); % show average/full stimulus
-setappdata(hfig,'isRawtime',0); % show stimulus in original order or sorted
-setappdata(hfig,'isZscore',0); % show normalized (z-score) version of fluorescent
-setappdata(hfig,'isShowMasks',0);
-setappdata(hfig,'isShowMskOutline',0);
-setappdata(hfig,'isWeighAlpha',0);
-setappdata(hfig,'isPlotAnatomyOnly',0);
-setappdata(hfig,'isRefAnat',0);
-
-setappdata(hfig,'clusgroupID_view',1);
-setappdata(hfig,'clusID_view',0); % set in UpdateClusGroupGUI
 
 %% Create UI controls
 set(gcf,'DefaultUicontrolUnits','normalized');
@@ -150,7 +77,8 @@ grid = 0:bwidth+0.001:1;
 %% global variables: various UI element handles
 global hback hfwd hclusgroupmenu hclusgroupname hclusmenu hclusname...
     hstimrangemenu hopID hloadfish hstimreg hmotorreg...
-    hcentroidreg hcentroid hstimrange hmasklistbox h_isavr h_israwtime h_iszscore; % hfishnum
+    hcentroidreg hcentroid hstimrange hmasklistbox hshowrefanat hshowfishoutline...
+    h_isStimAvr h_israwtime h_iszscore hisshowmasks; % hfishnum
 
 %% UI ----- tab one ----- (General)
 i_tab = 1;
@@ -231,6 +159,12 @@ uicontrol('Parent',tab{i_tab},'Style','checkbox','String','Plot anatomy only',..
     'Position',[grid(i) yrow(i_row) bwidth*n rheight],...
     'Callback',@checkbox_isPlotAnatomyOnly_Callback);
 
+i=i+n;
+n=3; % popupplot option: whether to plot regressor
+uicontrol('Parent',tab{i_tab},'Style','checkbox','String','Plot Regressor',...
+    'Position',[grid(i) yrow(i_row) bwidth*n rheight],...
+    'Callback',@checkbox_isPlotRegressorWithTS_Callback);
+
 %% UI row 2: Load
 i_row = 2;
 i = 1;n = 0;
@@ -264,10 +198,16 @@ hloadfish = uicontrol('Parent',tab{i_tab},'Style','popupmenu','String',temp,...
     'Callback',@popup_loadfullfishmenu_Callback);
 
 i=i+n;
-n=2; %
-uicontrol('Parent',tab{i_tab},'Style','pushbutton','String','or choose files',...
-    'Position',[grid(i) yrow(i_row) bwidth*n rheight],...
-    'Callback',@pushbutton_choosefilestoload_Callback);
+n=2; % only centroids (~mean) of clusters shown on left-side plot, the rest is unchanged
+uicontrol('Parent',tab{i_tab},'Style','checkbox','String','Load 100% data',...
+    'Position',[grid(i) yrow(i_row) bwidth*n rheight],'Value',1,...
+    'Callback',@checkbox_isFullData_Callback);
+
+% i=i+n;
+% n=2; %
+% uicontrol('Parent',tab{i_tab},'Style','pushbutton','String','or choose files',...
+%     'Position',[grid(i) yrow(i_row) bwidth*n rheight],...
+%     'Callback',@pushbutton_choosefilestoload_Callback);
 
 i=i+n;
 n=2; % options to load different stimulus types (if applicable for this fish)
@@ -286,7 +226,7 @@ i = 1;n = 0;
 
 i=i+n;
 n=2; % only centroids (~mean) of clusters shown on left-side plot, the rest is unchanged
-h_isavr = uicontrol('Parent',tab{i_tab},'Style','checkbox','String','Show stim-avr',...
+h_isStimAvr = uicontrol('Parent',tab{i_tab},'Style','checkbox','String','Show stim-avr',...
     'Position',[grid(i) yrow(i_row) bwidth*n rheight],'Value',1,...
     'Callback',@checkbox_isStimAvr_Callback);
 
@@ -299,7 +239,7 @@ h_israwtime = uicontrol('Parent',tab{i_tab},'Style','checkbox','String','Show ra
 i=i+n;
 n=2; % showing z-scored version (each cell normalized to mean=0, std=1) on left-side plot
 h_iszscore = uicontrol('Parent',tab{i_tab},'Style','checkbox','String','Show z-score',...
-    'Position',[grid(i) yrow(i_row) bwidth*n rheight],'Value',0,...
+    'Position',[grid(i) yrow(i_row) bwidth*n rheight],'Value',1,...
     'Callback',@checkbox_isZscore_Callback);
 
 i=i+n;
@@ -321,9 +261,15 @@ hcentroid = uicontrol('Parent',tab{i_tab},'Style','checkbox','String','Show clus
 
 i=i+n;
 n=3; % only centroids (~mean) of clusters shown on left-side plot, the rest is unchanged
-uicontrol('Parent',tab{i_tab},'Style','checkbox','String','Show normalized anatomy',...
+hshowrefanat = uicontrol('Parent',tab{i_tab},'Style','checkbox','String','Show normalized stack',...
     'Position',[grid(i) yrow(i_row) bwidth*n rheight],...
     'Callback',@checkbox_showrefanat_Callback);
+
+i=i+n;
+n=3; % only centroids (~mean) of clusters shown on left-side plot, the rest is unchanged
+hshowfishoutline = uicontrol('Parent',tab{i_tab},'Style','checkbox','String','Show fish outline',...
+    'Position',[grid(i) yrow(i_row) bwidth*n rheight],'Value',0,...
+    'Callback',@checkbox_showfishoutline_Callback);
 
 %% UI ----- tab two ----- (Operations)
 i_tab = 2;
@@ -346,14 +292,14 @@ hfwd = uicontrol('Parent',tab{i_tab},'Style','pushbutton','String','Forward',...
 
 i=i+n;
 n=3; % Choose range of clusters to keep. format: e.g. '1:2,4-6,8:end'
-uicontrol('Parent',tab{i_tab},'Style','text','String','Choose cluster range:',...
+uicontrol('Parent',tab{i_tab},'Style','text','String','Select cluster range:',...
     'Position',[grid(i) yrow(i_row)-dTextHt bwidth*n rheight],'HorizontalAlignment','right');
 
 i=i+n;
 n=1;
 uicontrol('Parent',tab{i_tab},'Style','edit',...
     'Position',[grid(i) yrow(i_row) bwidth*n rheight],...
-    'Callback',@edit_choose_range_Callback);
+    'Callback',@edit_selectclusterrange_Callback);
 
 i=i+n;
 n=2; % Choose range of clusters to exclude. format: e.g. '1:2,4-6,8:end'
@@ -388,7 +334,7 @@ uicontrol('Parent',tab{i_tab},'Style','text','String','Set operations:',...
 
 i=i+n; % 'setdiff' is current minus next, 'rev setdiff' is next minus current.
 n=2; % smartUnion = SmartUnique, cells belonging to 2 clusters goes to the more correlated one
-menu = {'(choose)','union','intersect','setdiff','rev setdiff','setxor','smartUnion'};
+menu = {'(choose)','union','intersect','setdiff','rev setdiff','parent full clus','rev full clus'};
 hopID = uicontrol('Parent',tab{i_tab},'Style','popupmenu','String',menu,'Value',1,...
     'Position',[grid(i) yrow(i_row) bwidth*n rheight],...
     'Callback',{@popup_operations_Callback});
@@ -402,7 +348,7 @@ i=i+n; % 'hier' is the same as default (used after every k-means);'stim-lock' us
 n=2; % motor stuff uses the best alignment (by cross-correlation) with the behavior trace;
 % L+R is average of L & R; stim-motor is combines 'stim-lock' w 'motor' with arbituary weighting.
 menu = {'(choose)','hier.','size','stim-lock','corr','motor','L motor','R motor','L+R motor',...
-    'multi-motor','multi-motor w/ stim-avr','multi-stim w/ stim-avr'};
+    'multi-motor','multi-motor least-stim','multi-motor w/ stim-avr','multi-stim w/ stim-avr'};
 uicontrol('Parent',tab{i_tab},'Style','popupmenu','String',menu,'Value',1,...
     'Position',[grid(i) yrow(i_row) bwidth*n rheight],...
     'Callback',{@popup_ranking_Callback});
@@ -419,11 +365,33 @@ uicontrol('Parent',tab{i_tab},'Style','pushbutton','String','Flip up-down',...
     'Position',[grid(i) yrow(i_row) bwidth*n rheight],...
     'Callback',@pushbutton_flipud_Callback);
 
+% i=i+n;
+% n=3; % switch between 2 colormaps now, jet and a cropped version of hsv (so not all circular)
+% uicontrol('Parent',tab{i_tab},'Style','pushbutton','String','Switch colormap',...
+%     'Position',[grid(i) yrow(i_row) bwidth*n rheight],...
+%     'Callback',{@pushbutton_clrmap_Callback});
 i=i+n;
-n=3; % switch between 2 colormaps now, jet and a cropped version of hsv (so not all circular)
-uicontrol('Parent',tab{i_tab},'Style','pushbutton','String','Switch colormap',...
+n=3; % loads full single-fish data from CONST_F?.mat
+uicontrol('Parent',tab{i_tab},'Style','text','String','Choose colormap:',...
+    'Position',[grid(i) yrow(i_row)-dTextHt bwidth*n rheight],'HorizontalAlignment','right');
+
+i=i+n;
+n=2; %
+hloadfish = uicontrol('Parent',tab{i_tab},'Style','popupmenu',...
+    'String',{'hsv(new)','jet','greedy hsv','hsv(old)'},...
     'Position',[grid(i) yrow(i_row) bwidth*n rheight],...
-    'Callback',{@pushbutton_clrmap_Callback});
+    'Callback',@popup_chooseclrmap_Callback);
+
+i=i+n;
+n=2; % Choose range of clusters to exclude. format: e.g. '1:2,4-6,8:end'
+uicontrol('Parent',tab{i_tab},'Style','text','String','numK:',...
+    'Position',[grid(i) yrow(i_row)-dTextHt bwidth*n rheight],'HorizontalAlignment','right');
+
+i=i+n;
+n=1;
+uicontrol('Parent',tab{i_tab},'Style','edit',...
+    'Position',[grid(i) yrow(i_row) bwidth*n rheight],...
+    'Callback',@edit_manualsetnumK_Callback);
 
 %% UI row 3: Anatomy
 i_row = 3;
@@ -501,7 +469,7 @@ uicontrol('Parent',tab{i_tab},'Style','text','String','Motor reg.:',...
 
 i=i+n;
 n=2; % (unlike stim regressors, names hardcoded, not importet from regressor...)
-menu = {'(choose)','left swims','right swims','forward swims','raw left','raw right','raw average'};
+menu = {'(choose)','left swims','forward swims','right swims','raw left','raw right','raw average'};
 hmotorreg = uicontrol('Parent',tab{i_tab},'Style','popupmenu','String',menu,'Value',1,...
     'Position',[grid(i) yrow(i_row) bwidth*n rheight],...
     'Callback',@popup_getmotorreg_Callback);
@@ -540,6 +508,7 @@ uicontrol('Parent',tab{i_tab},'Style','pushbutton','String','Corr. threshold:',.
 
 i=i+n;
 n=1;
+thres_reg = getappdata(hfig,'thres_reg');
 uicontrol('Parent',tab{i_tab},'Style','edit','String',num2str(thres_reg),...
     'Position',[grid(i) yrow(i_row) bwidth*n rheight],...
     'Callback',@edit_regthres_Callback);
@@ -574,6 +543,24 @@ uicontrol('Parent',tab{i_tab},'Style','pushbutton','String','iter.reg','Enable',
     'Position',[grid(i) yrow(i_row) bwidth*n rheight],...
     'Callback',{@pushbutton_IterCentroidRegression_Callback});
 
+i=i+n; 
+n=2; 
+uicontrol('Parent',tab{i_tab},'Style','pushbutton','String','Cluster regression',...  
+    'Position',[grid(i) yrow(i_row) bwidth*n rheight],...
+    'Callback',{@pushbutton_clusterregression_Callback});
+
+i=i+n;
+n=3; % optionally plot histogram of correlation values for all cells in dataset, visualize cut-off
+uicontrol('Parent',tab{i_tab},'Style','checkbox','String','(individual cells)',...
+    'Position',[grid(i) yrow(i_row) bwidth*n rheight],'Value',1,...
+    'Callback',@checkbox_isRegIndividualCells_Callback);
+
+i=i+n;
+n=3; % optionally plot histogram of correlation values for all cells in dataset, visualize cut-off
+uicontrol('Parent',tab{i_tab},'Style','checkbox','String','(current cells)',...
+    'Position',[grid(i) yrow(i_row) bwidth*n rheight],'Value',1,...
+    'Callback',@checkbox_isRegCurrentCells_Callback);
+
 %% UI row 3: t-tests
 i_row = 3;
 i = 1;n = 0;
@@ -596,6 +583,7 @@ uicontrol('Parent',tab{i_tab},'Style','text','String','t-test thres:',...
 
 i=i+n;
 n=1;
+thres_ttest = getappdata(hfig,'thres_ttest');
 uicontrol('Parent',tab{i_tab},'Style','edit','String',num2str(thres_ttest),...
     'Position',[grid(i) yrow(i_row) bwidth*n rheight],...
     'Callback',@edit_ttestthres_Callback);
@@ -671,6 +659,7 @@ uicontrol('Parent',tab{i_tab},'Style','pushbutton','String','Merge thres. (corr.
 
 i=i+n;
 n=1;
+thres_merge = getappdata(hfig,'thres_merge');
 uicontrol('Parent',tab{i_tab},'Style','edit','String',num2str(thres_merge),...
     'Position',[grid(i) yrow(i_row) bwidth*n rheight],...
     'Callback',{@edit_mergethres_Callback});
@@ -683,6 +672,7 @@ uicontrol('Parent',tab{i_tab},'Style','pushbutton','String','Iter. split',...
 
 i=i+n;
 n=1;
+thres_split = getappdata(hfig,'thres_split');
 uicontrol('Parent',tab{i_tab},'Style','edit','String',num2str(thres_split),...
     'Position',[grid(i) yrow(i_row) bwidth*n rheight],...
     'Callback',{@edit_splitthres_Callback});
@@ -695,21 +685,40 @@ uicontrol('Parent',tab{i_tab},'Style','pushbutton','String','Cluster size thres.
 
 i=i+n;
 n=1;
+thres_size = getappdata(hfig,'thres_size');
 uicontrol('Parent',tab{i_tab},'Style','edit','String',num2str(thres_size),...
     'Position',[grid(i) yrow(i_row) bwidth*n rheight],...
     'Callback',{@edit_sizethres_Callback});
 
 i=i+n+1; % longest script here. Splits clusters and prunes them, to yield only very tight clusters.
-n=3; % really pretty results, but takes a while when regressing with every centroid. Read code for details.
+n=3;
 uicontrol('Parent',tab{i_tab},'Style','pushbutton','String','Full Auto-Clustering',...
     'Position',[grid(i) yrow(i_row) bwidth*n rheight],...
     'Callback',{@pushbutton_autoclus_Callback});
 
 i=i+n;
-n=4; % by default it starts with a k-mean of 20 of the current cells. Could skip that if already clustered.
-uicontrol('Parent',tab{i_tab},'Style','checkbox','String','(starting with k-mean)',...
+n=3; % by default it starts with a k-mean of 20 of the current cells. Could skip that if already clustered.
+uicontrol('Parent',tab{i_tab},'Style','checkbox','String','(start with k-mean)',...
     'Position',[grid(i) yrow(i_row) bwidth*n rheight],'Value',1,...
     'Callback',@checkbox_wkmeans_Callback);
+
+i=i+n;
+n=3; % by default it starts with a k-mean of 20 of the current cells. Could skip that if already clustered.
+uicontrol('Parent',tab{i_tab},'Style','checkbox','String','(reg. with all cells)',...
+    'Position',[grid(i) yrow(i_row) bwidth*n rheight],'Value',1,...
+    'Callback',@checkbox_wAllCells_Callback);
+
+i=i+n; % longest script here. Splits clusters and prunes them, to yield only very tight clusters.
+n=3;
+uicontrol('Parent',tab{i_tab},'Style','pushbutton','String','Make foxels',...
+    'Position',[grid(i) yrow(i_row) bwidth*n rheight],...
+    'Callback',{@pushbutton_makefoxels_Callback});
+
+i=i+n; % starting with foxels
+n=3; 
+uicontrol('Parent',tab{i_tab},'Style','pushbutton','String','Auto-Clustering from foxels',...
+    'Position',[grid(i) yrow(i_row) bwidth*n rheight],...
+    'Callback',{@pushbutton_autoclusfromfoxels_Callback});
 
 %% UI row 3: Hier. clustering
 i_row = 3;
@@ -754,6 +763,18 @@ n=2; % Plots the correlation between all current clusters as a matrix
 uicontrol('Parent',tab{i_tab},'Style','pushbutton','String','Corr. plot',...
     'Position',[grid(i) yrow(i_row) bwidth*n rheight],...
     'Callback',{@pushbutton_corrplot_Callback});
+
+i=i+n;
+n=2; % find clusters that may be artifacts (small std in any dimension)
+uicontrol('Parent',tab{i_tab},'Style','pushbutton','String','Artifacts',...
+    'Position',[grid(i) yrow(i_row) bwidth*n rheight],...
+    'Callback',{@pushbutton_findartifacts_Callback});
+
+i=i+n;
+n=2; % remove clusters that may be artifacts (small std in any dimension)
+uicontrol('Parent',tab{i_tab},'Style','pushbutton','String','Remove artifacts',...
+    'Position',[grid(i) yrow(i_row) bwidth*n rheight],...
+    'Callback',{@pushbutton_removeartifacts_Callback});
 
 %% UI ----- tab five ----- (Saved Clusters)
 i_tab = 5;
@@ -897,7 +918,14 @@ i_row = 1;
 i = 1;n = 0;
 
 % row-height exception! listboxes are tall
+
 i=i+n+5;
+n=3; % if checked, show thresholded masks on right-side plot
+hisshowmasks = uicontrol('Parent',tab{i_tab},'Style','checkbox','String','Show masks',...
+    'Position',[grid(i) yrow(i_row) bwidth*n rheight],'Value',1,...
+    'Callback',@checkbox_showmasks_Callback);
+
+i=i+n;
 n=2;
 s = 'plot histogram of all masks, also printing thresholded mask-names';
 uicontrol('Parent',tab{i_tab},'Style','pushbutton','String','Find masks',...
@@ -905,10 +933,16 @@ uicontrol('Parent',tab{i_tab},'Style','pushbutton','String','Find masks',...
     'Callback',{@pushbutton_findmasks_Callback},'TooltipString',s);
 
 i=i+n;
-n=2; % if checked, show thresholded masks on right-side plot
-uicontrol('Parent',tab{i_tab},'Style','checkbox','String','Show masks',...
-    'Position',[grid(i) yrow(i_row) bwidth*n rheight],'Value',0,...
-    'Callback',@checkbox_showmasks_Callback);
+n=3; % if checked, control for mask size when finding relevant masks
+uicontrol('Parent',tab{i_tab},'Style','checkbox','String','normalize size',...
+    'Position',[grid(i) yrow(i_row) bwidth*n rheight],'Value',1,...
+    'Callback',@checkbox_normMskSize_Callback);
+
+i=i+n;
+n=3; % if checked, control for mask size when finding relevant masks
+uicontrol('Parent',tab{i_tab},'Style','checkbox','String','plot hist',...
+    'Position',[grid(i) yrow(i_row) bwidth*n rheight],'Value',1,...
+    'Callback',@checkbox_isplotMskhist_Callback);
 
 %% UI row 2:
 i_row = 2;
@@ -916,20 +950,38 @@ i = 1;n = 0;
 
 i=i+n+5;
 n=2; % display selected mask(s)
-uicontrol('Parent',tab{i_tab},'Style','text','String','Choose mask ID:',...
+uicontrol('Parent',tab{i_tab},'Style','text','String','Draw masks:',...
     'Position',[grid(i) yrow(i_row)-dTextHt bwidth*n rheight],'HorizontalAlignment','right');
 
 i=i+n;
-n=1; % manually input (can choose from histogram recommendation)
+n=1; % manual input (can choose from histogram recommendation)
 uicontrol('Parent',tab{i_tab},'Style','edit',...
     'Position',[grid(i) yrow(i_row) bwidth*n rheight],...
-    'Callback',@edit_chooseMskID_Callback);
+    'Callback',@edit_chooseMskIDtodraw_Callback);
 
 i=i+n;
 n=3; % if checked, show thresholded masks on right-side plot
 uicontrol('Parent',tab{i_tab},'Style','checkbox','String','Show outline only',...
-    'Position',[grid(i) yrow(i_row) bwidth*n rheight],'Value',1,...
+    'Position',[grid(i) yrow(i_row) bwidth*n rheight],'Value',0,...
     'Callback',@checkbox_showmskoutline_Callback);
+
+i=i+n;
+n=3; % select cells that fall within chosen masks
+uicontrol('Parent',tab{i_tab},'Style','text','String','Screen with masks:',...
+    'Position',[grid(i) yrow(i_row)-dTextHt bwidth*n rheight],'HorizontalAlignment','right');
+
+i=i+n;
+n=2; % manual input
+s = 'Screen current cells within selected mask(s)';
+uicontrol('Parent',tab{i_tab},'Style','edit',...
+    'Position',[grid(i) yrow(i_row) bwidth*n rheight],...
+    'Callback',@edit_chooseMskIDtoscreen_Callback,'TooltipString',s);
+
+i=i+n;
+n=3; % if checked, show thresholded masks on right-side plot
+uicontrol('Parent',tab{i_tab},'Style','checkbox','String','Screen all cells',...
+    'Position',[grid(i) yrow(i_row) bwidth*n rheight],'Value',0,...
+    'Callback',@checkbox_screenMskFromAllCells_Callback);
 
 %% UI row 3: find masks
 i_row = 3;
@@ -941,6 +993,14 @@ n=5; % manually input (can choose from histogram recommendation)
 hmasklistbox = uicontrol('Parent',tab{i_tab},'Style','listbox','Max',10,'Min',0,...
     'Position',[grid(i) yrow(i_row) bwidth*n rheight*5],...
     'Callback',@listbox_chooseMskID_Callback);
+
+i=i+n;
+n=4;
+s = 'plot histogram of all masks, also printing thresholded mask-names';
+uicontrol('Parent',tab{i_tab},'Style','pushbutton',...
+    'String','make new mask from current display',...
+    'Position',[grid(i) yrow(i_row) bwidth*n rheight],...
+    'Callback',{@pushbutton_makenewmask_Callback},'TooltipString',s);
 
 %% Load figure
 
@@ -959,11 +1019,7 @@ end
 %% row 1: File
 
 function pushbutton_save_Callback(hObject,~)
-hfig = getParentFigure(hObject);
-i_fish = getappdata(hfig,'i_fish');
-global VAR;
-VAR(i_fish).ClusGroup = CurrentClusGroup(hfig);
-disp('saved to workspace ''VAR''');
+disp('obsl');
 end
 
 function pushbutton_savemat_Callback(hObject,~)
@@ -983,7 +1039,7 @@ matname = [timestamp '.mat'];
 save(fullfile(arcmatfolder,matname),'VAR','-v6');
 
 % also save the current VAR file
-save(fullfile(data_masterdir,'VAR_current.mat'),'VAR','-v6');
+save(fullfile(data_masterdir,'VAR_new.mat'),'VAR','-v6');
 disp('saved both to workspace and .mat');
 end
 
@@ -1015,7 +1071,8 @@ circlemaskIX = MakeCircularMask(radius_xy,dimv_yxz(1:2));
 
 % make color-map
 numK = double(max(gIX));
-clrmap = hsv(round(double(numK)*1.1));
+clrmap_name = getappdata(hfig,'clrmap_name');
+clrmap = GetColormap(clrmap_name,numK); %hsv(round(double(numK)*1.1));
 % set transparency
 alpha = ones(size(cIX))*0.5;
 
@@ -1079,21 +1136,27 @@ assignin('base', 'tIX', getappdata(hfig,'tIX'));
 assignin('base', 'numK', getappdata(hfig,'numK'));
 assignin('base', 'absIX', getappdata(hfig,'absIX'));
 assignin('base', 'i_fish', getappdata(hfig,'i_fish'));
+assignin('base', 'CellXYZ', getappdata(hfig,'CellXYZ'));
 end
 
 function pushbutton_loadVARfromworkspace_Callback(hObject,~)
 % (code copied from UpdateFishData)
-disp('import VAR from workspace');
+% disp('import VAR from workspace');
+% hfig = getParentFigure(hObject);
+% 
+% clusgroupID = 1;
+% setappdata(hfig,'clusgroupID',clusgroupID);
+% setappdata(hfig,'clusgroupID_view',clusgroupID);
+% UpdateClusGroupGUI(hfig,clusgroupID);
+% 
+% setappdata(hfig,'clusID',1);
+% UpdateClustersGUI(hfig);
+% LoadNewClusters(hfig);
+
 hfig = getParentFigure(hObject);
-
-clusgroupID = 1;
-setappdata(hfig,'clusgroupID',clusgroupID);
-setappdata(hfig,'clusgroupID_view',clusgroupID);
-UpdateClusGroupGUI(hfig,clusgroupID);
-
-setappdata(hfig,'clusID',1);
-UpdateClustersGUI(hfig);
-LoadNewClusters(hfig);
+[cIX,gIX] = BubblePlot(hfig);
+UpdateIndices(hfig,cIX,gIX);
+RefreshFigure(hfig);
 end
 
 function pushbutton_loadCurrentClustersfromworkspace_Callback(hObject,~)
@@ -1108,37 +1171,46 @@ RefreshFigure(hfig);
 end
 
 function pushbutton_popupplot_Callback(hObject,~)
+hfig = getParentFigure(hObject);
 % very similar as function RefreshFigure(hfig)
 isPopout = 1; % no down-sampling in plots
+setappdata(hfig,'isPopout',1);
 % load
-hfig = getParentFigure(hObject);
 i_fish = getappdata(hfig,'i_fish');
 isCentroid = getappdata(hfig,'isCentroid');
-isRefAnat = getappdata(hfig,'isRefAnat');
+% isRefAnat = getappdata(hfig,'isRefAnat');
 isPlotLines = getappdata(hfig,'isPlotLines');
 isPlotBehavior = getappdata(hfig,'isPlotBehavior');
 isPlotAnatomyOnly = getappdata(hfig,'isPlotAnatomyOnly');
+isPlotRegWithTS = getappdata(hfig,'isPlotRegWithTS');
 
 if ~isPlotAnatomyOnly,
-    figure('Position',[50,50,1600,800],'color',[1 1 1],...
+    figure('Position',[50,50,800,600],... % [50,50,1600,800],
+        'color',[1 1 1],...
         'Name',['Fish#' num2str(i_fish)]);
-    h1 = axes('Position',[0.05, 0.03, 0.53, 0.94]); % left ~subplot
-    h2 = axes('Position',[0.61, 0.03, 0.35, 0.94]); % right ~subplot
+    h1 = axes('Position',[0.05, 0.03, 0.4, 0.94]); % left ~subplot
+    h2 = axes('Position',[0.46, 0.03, 0.5, 0.94]); % right ~subplot
     
     % left subplot
     axes(h1);
-    DrawTimeSeries(hfig,h1,isPopout,isCentroid,isPlotLines,isPlotBehavior);
+    cIX = getappdata(hfig,'cIX');
+    gIX = getappdata(hfig,'gIX');
+    DrawTimeSeries(hfig,cIX,gIX,h1,isPopout,isCentroid,isPlotLines,isPlotBehavior,isPlotRegWithTS);
     
     % right subplot
     axes(h2);
-    DrawCellsOnAnatProj(hfig,isRefAnat,isPopout);
+    I = LoadCurrentFishForAnatPlot(hfig);
+    DrawCellsOnAnat(I);
+%     DrawCellsOnAnatProj(hfig,isRefAnat,isPopout);
     
 else
     figure('Position',[600,50,600,900],'color',[1 1 1],...
         'Name',['Fish#' num2str(i_fish)]);
     axes('Position',[0.03, 0.03, 0.94, 0.94]); % right ~subplot
     % right subplot
-    DrawCellsOnAnatProj(hfig,isRefAnat,isPopout);
+    I = LoadCurrentFishForAnatPlot(hfig);
+    DrawCellsOnAnat(I);
+%     DrawCellsOnAnatProj(hfig,isRefAnat,isPopout);
 end
 end
 
@@ -1158,47 +1230,65 @@ hfig = getParentFigure(hObject);
 setappdata(hfig,'isPlotAnatomyOnly',get(hObject,'Value'));
 end
 
+function checkbox_isPlotRegressorWithTS_Callback(hObject,~)
+hfig = getParentFigure(hObject);
+setappdata(hfig,'isPlotRegWithTS',get(hObject,'Value'));
+end
+
 %% row 2: Load
 
 function popup_loadfullfishmenu_Callback(hObject,~)
 i_fish = get(hObject,'Value')-1;
 hfig = getParentFigure(hObject);
+isFullData = getappdata(hfig,'isFullData');
 if i_fish>0,
-    tic
     WatchOn(hfig); drawnow;
-    LoadFullFish(hfig,i_fish);
+    LoadFullFish(hfig,i_fish,isFullData);
     UpdateFishData(hfig,i_fish);
-    toc
     WatchOff(hfig);
 end
 end
 
-function pushbutton_choosefilestoload_Callback(hObject,~)
+function checkbox_isFullData_Callback(hObject,~)
 hfig = getParentFigure(hObject);
-data_masterdir = getappdata(hfig,'data_masterdir');
+isFullData = get(hObject,'Value');
+setappdata(hfig,'isFullData',isFullData);
+i_fish = getappdata(hfig,'i_fish');
 
-% get fish number
-prompt={'Enter fish number:'};
-answer = inputdlg(prompt);
-if ~isempty(answer),
-    new_i_fish = str2double(answer{:});
-    
-    [FileName1,PathName] = uigetfile('*.h5','Select the hdf5(.h5) file for TimeSeries data',data_masterdir);
-    hdf5_dir = fullfile(PathName,FileName1);
-    [FileName2,PathName] = uigetfile('*.mat','Select the .mat file for other data',PathName);
-    mat_dir = fullfile(PathName,FileName2);
-    
-    if isequal(FileName1,0) || isequal(FileName2,0),
-        disp('User selected Cancel')
-    else
-        % display fish-number in hloadfish
-        global hloadfish; %#ok<TLEV>
-        set(hloadfish,'Value',new_i_fish+1);
-        
-        LoadFullFish(hfig,new_i_fish,hdf5_dir,mat_dir);
-    end
+if i_fish>0,
+    WatchOn(hfig); drawnow;
+    LoadFullFish(hfig,i_fish,isFullData);
+    UpdateFishData(hfig,i_fish);
+    WatchOff(hfig);
 end
 end
+
+% function pushbutton_choosefilestoload_Callback(hObject,~)
+% hfig = getParentFigure(hObject);
+% data_masterdir = getappdata(hfig,'data_masterdir');
+% 
+% % get fish number
+% prompt={'Enter fish number:'};
+% answer = inputdlg(prompt);
+% if ~isempty(answer),
+%     new_i_fish = str2double(answer{:});
+%     
+%     [FileName1,PathName] = uigetfile('*.h5','Select the hdf5(.h5) file for TimeSeries data',data_masterdir);
+%     hdf5_dir = fullfile(PathName,FileName1);
+%     [FileName2,PathName] = uigetfile('*.mat','Select the .mat file for other data',PathName);
+%     mat_dir = fullfile(PathName,FileName2);
+%     
+%     if isequal(FileName1,0) || isequal(FileName2,0),
+%         disp('User selected Cancel')
+%     else
+%         % display fish-number in hloadfish
+%         global hloadfish; %#ok<TLEV>
+%         set(hloadfish,'Value',new_i_fish+1);
+%         
+%         LoadFullFish(hfig,new_i_fish,hdf5_dir,mat_dir);
+%     end
+% end
+% end
 
 function UpdateFishData(hfig,i_fish)
 setappdata(hfig,'i_fish',i_fish);
@@ -1219,15 +1309,15 @@ if ~isempty(hstimrangemenu), % before GUI initialization,
 end
 
 %% set current timelists
-periods = getappdata(hfig,'periods');
-setappdata(hfig,'stimrange',1:length(periods));
+[~,stimrange] = GetStimRange([],i_fish);
+setappdata(hfig,'stimrange',stimrange);
 UpdateTimeIndex(hfig,'isSkipcIX'); % doesn't include Refresh
 
 %% set stimulus regressors
 stim = getappdata(hfig,'stim');
 fishset = getappdata(hfig,'fishset');
 
-[~, names] = GetStimRegressor(stim,fishset);
+[~, names] = GetStimRegressor(stim,fishset,i_fish);
 
 s = cell(size(names));
 for i = 1:length(names),
@@ -1262,7 +1352,7 @@ end
 
 function checkbox_isStimAvr_Callback(hObject,~)
 hfig = getParentFigure(hObject);
-setappdata(hfig,'isAvr',get(hObject,'Value'));
+setappdata(hfig,'isStimAvr',get(hObject,'Value'));
 UpdateTimeIndex(hfig);
 RefreshFigure(hfig);
 end
@@ -1309,7 +1399,20 @@ end
 function checkbox_showrefanat_Callback(hObject,~)
 hfig = getParentFigure(hObject);
 setappdata(hfig,'isRefAnat',get(hObject,'Value'));
+global hisshowmasks;
+set(hisshowmasks,'Value',0);
+setappdata(hfig,'isShowMasks',0);
 RefreshFigure(hfig);
+end
+
+function checkbox_showfishoutline_Callback(hObject,~)
+hfig = getParentFigure(hObject);
+isShowFishOutline = get(hObject,'Value');
+setappdata(hfig,'isShowFishOutline',isShowFishOutline);
+global hshowrefanat;
+set(hshowrefanat,'Value',1);
+setappdata(hfig,'isRefAnat',1);
+RefreshAnat(hfig);
 end
 
 %% ----- tab two ----- (Operations)
@@ -1346,10 +1449,6 @@ if ~isempty(bC.cIX{1}),
     
     M = GetTimeIndexedData(hfig);
     setappdata(hfig,'M',M);
-    
-    % FindCentroid reset:
-    setappdata(hfig,'Centroids',[]);
-    setappdata(hfig,'D_ctrd',[]);
     
     % finish
     disp('back (from cache)')
@@ -1390,11 +1489,7 @@ if ~isempty(fC.cIX{1}),
     
     M = GetTimeIndexedData(hfig);
     setappdata(hfig,'M',M);
-    
-    % FindCentroid reset:
-    setappdata(hfig,'Centroids',[]);
-    setappdata(hfig,'D_ctrd',[]);
-    
+
     % finish
     disp('forward (from cache)')
     RefreshFigure(hfig);
@@ -1404,7 +1499,7 @@ else
 end
 end
 
-function edit_choose_range_Callback(hObject,~)
+function edit_selectclusterrange_Callback(hObject,~)
 hfig = getParentFigure(hObject);
 cIX = getappdata(hfig,'cIX');
 gIX = getappdata(hfig,'gIX');
@@ -1413,15 +1508,7 @@ str = get(hObject,'String');
 if ~isempty(str),
     str = strrep(str,'end',num2str(max(gIX)));
     range = ParseRange(str);
-    % update indices
-    tempI = [];
-    for i = range,
-        tempI = [tempI;find(gIX==i)];
-    end
-    cIX = cIX(tempI);
-    gIX = gIX(tempI);
-    UpdateIndices(hfig,cIX,gIX);
-    RefreshFigure(hfig);
+    SelectClusterRange(hfig,cIX,gIX,range);
 end
 end
 
@@ -1545,17 +1632,20 @@ switch rankID,
         disp('multi-motor');
         [gIX,rankscore] = RankByMultiRegression_Direct(hfig,gIX,numU,1);
     case 10,
+        disp('multi-motor least-stim');
+        [gIX,rankscore] = RankByMultiRegression_Direct(hfig,gIX,numU,2);
+    case 11,
         disp('multi-motor w/ stim-avr');
         [gIX,rankscore] = RankByMultiRegression_Direct(hfig,gIX,numU,3);
-    case 11,
+    case 12,
         disp('multi-stim w/ stim-avr');
         [gIX,rankscore] = RankByMultiRegression_Direct(hfig,gIX,numU,4);
 end
 if rankID>1,
     setappdata(hfig,'rankscore',round(rankscore*100)/100);
-    setappdata(hfig,'clrmap','jet');
+    setappdata(hfig,'clrmap_name','jet');
 else
-    setappdata(hfig,'clrmap','hsv');
+    setappdata(hfig,'clrmap_name','hsv_new');
 end
 UpdateIndices(hfig,cIX,gIX,numU);
 RefreshFigure(hfig);
@@ -1566,13 +1656,13 @@ function [gIX,rankscore] = RankByStimLock_Direct(hfig,gIX,numU)
 periods = getappdata(hfig,'periods');
 fishset = getappdata(hfig,'fishset');
 
-isAvr = getappdata(hfig,'isAvr');
+isStimAvr = getappdata(hfig,'isStimAvr');
 isRawtime = getappdata(hfig,'isRawtime');
-if isAvr == 1 || isRawtime == 1,
-    setappdata(hfig,'isAvr',0);
+if isStimAvr == 1 || isRawtime == 1,
+    setappdata(hfig,'isStimAvr',0);
     setappdata(hfig,'isRawtime',0);
-    global h_isavr h_israwtime; %#ok<TLEV>
-    h_isavr.Value = 0;
+    global h_isStimAvr h_israwtime; %#ok<TLEV>
+    h_isStimAvr.Value = 0;
     h_israwtime.Value = 0;
     UpdateTimeIndex(hfig);
 end
@@ -1663,19 +1753,21 @@ for i = 1:numU,
         %             [H(i),I] = max(xcorr(C(i,:),reg(3,:),'coeff'));
         %             shift(i) = I - length(behavior);
         case 1, % 'motor'
-            R = zeros(1,4);
+%             regressor = regressors(3).im;
+%             H(i) = corr(regressor',C(i,:)');
+            R = zeros(1,5);
             for j = 1:3,
                 regressor = regressors(j).im;
                 R(j) = corr(regressor',C(i,:)');
             end
-            regressor = 0.5*(regressors(4).im+regressors(5).im);
-            H(4) = corr(regressor',C(i,:)');
+%             regressor = 0.5*(regressors(4).im+regressors(5).im);
+%             R(4) = corr(regressor',C(i,:)');
             H(i) = max(R);
         case 2, % 'L motor'
-            regressor = regressors(1).im;
+            regressor = regressors(4).im;
             H(i) = corr(regressor',C(i,:)');
         case 3, % 'R motor'
-            regressor = regressors(2).im;
+            regressor = regressors(5).im;
             H(i) = corr(regressor',C(i,:)');
         case 4, % 'L+R motor'
             regressor = 0.5*(regressors(4).im+regressors(5).im);
@@ -1686,35 +1778,39 @@ end
 % assignin('base', 'shift', shift);
 end
 
-function [gIX,rankscore] = RankByMultiRegression_Direct(hfig,gIX,numU,option)
+function [gIX,rankscore,betas] = RankByMultiRegression_Direct(hfig,gIX,numU,option)
 %% get cluster centroids (means) from GUI current selection
 fishset = getappdata(hfig,'fishset');
 stim = getappdata(hfig,'stim');
 behavior = getappdata(hfig,'behavior');
+i_fish = getappdata(hfig,'i_fish');
+
+% C = getappdata(hfig,'M');
+% gIX = (1:size(C,1))';
+
 C = FindCentroid(hfig);
 nClus = size(C,1);
+
+setappdata(hfig,'gIX_betas',gIX);
 
 %% get stimulus regressor
 switch option
     case 1; % use all pre-defined stim-regressors
-        regressors = GetStimRegressor(stim,fishset);
-        M_regressor = zeros(length(regressors),length(regressors(1).im));
-        for i = 1:length(regressors),
-            M_regressor(i,:) = regressors(i).im;
-        end
-        regressor_s = M_regressor;
+        [~,~,regressor_s] = GetStimRegressor(stim,fishset,i_fish);
         
     case 2; % get stim regressors and find best match
-        stimregset = 1:8;
-        regressors = GetStimRegressor(stim,fishset);
-        M_regressor = zeros(length(stimregset),length(regressors(1).im));
-        for i = 1:length(stimregset),
-            M_regressor(i,:) = regressors(stimregset(i)).im;
-        end
-        
-        R = corr(M_regressor',C'); % row of R: each regressor
-        [~,IX] = max(R,[],1);
-        regressor_s_allclus = M_regressor(IX,:);
+        % hack:
+        [~,~,regressor_s] = GetStimRegressor(stim,fishset,i_fish);
+%         stimregset = 1:8;
+%         regressors = GetStimRegressor(stim,fishset,i_fish);
+%         M_regressor = zeros(length(stimregset),length(regressors(1).im));
+%         for i = 1:length(stimregset),
+%             M_regressor(i,:) = regressors(stimregset(i)).im;
+%         end
+%         
+%         R = corr(M_regressor',C'); % row of R: each regressor
+%         [~,IX] = max(R,[],1);
+%         regressor_s_allclus = M_regressor(IX,:);
         
     case {3,4}; % alternative: using 'stim-lock' means
         periods = getappdata(hfig,'periods');
@@ -1756,32 +1852,44 @@ switch option
 end
 
 %% get motor regressor
-regressors = GetMotorRegressor(behavior);
-motorregset = 1:3;
-M_regressor = zeros(length(motorregset),length(regressors(1).im));
-for i = 1:length(motorregset),
-    M_regressor(i,:) = regressors(motorregset(i)).im;
-end
-
-% switch option
-%     case 1;
-regressor_m = M_regressor;
-%     case {2,3};
-%         R = corr(M_regressor',C'); % row of R: each regressor
-%         [~,IX_m] = max(R,[],1);
-%         regressor_m_allclus = M_regressor(IX_m,:);
-% end
+[~,~,regressor_m] = GetMotorRegressor(behavior,i_fish);
 
 %% multi-regression
 switch option
     case 1; % regression with all regs, stim-regs before motor regs
         regs = vertcat(regressor_s,regressor_m);
         orthonormal_basis = Gram_Schmidt_Process(regs'); % actually is transposed?
-        betas = C * orthonormal_basis; % to reconstitute: betas(i,:)*orthonormal_basis'
+        
+        betas = zeros(nClus,size(orthonormal_basis,2)+1);
+        X = [ones(size(orthonormal_basis,1),1),orthonormal_basis];
+        tic
+        for i_clus = 1:nClus,
+            y = C(i_clus,:)';
+            betas(i_clus,:) = regress(y,X)';
+        end
+        t=toc
+        %         betas = C * orthonormal_basis; % to reconstitute: betas(i,:)*orthonormal_basis'
         % get ranking score: combined of motor coeffs
+%         H = -sqrt(sum((betas(:,1:end-3)).^2,2)); % least stim-dependent
         H = sqrt(sum((betas(:,end-2:end)).^2,2));
-    case {2,3}; % regression with stim-avr reg before motor regs
-        betas = zeros(nClus,1+length(motorregset)); %size(regressor_s,1)+1);
+        
+    case 2;
+        regs = vertcat(regressor_s,regressor_m);
+        orthonormal_basis = Gram_Schmidt_Process(regs'); % actually is transposed?
+        
+        betas = zeros(nClus,size(orthonormal_basis,2)+1);
+        X = [ones(size(orthonormal_basis,1),1),orthonormal_basis];
+        tic
+        for i_clus = 1:nClus,
+            y = C(i_clus,:)';
+            betas(i_clus,:) = regress(y,X)';
+        end
+        t=toc
+        % get ranking score: combined of motor coeffs
+        H = -sqrt(sum((betas(:,1:end-3)).^2,2)); % least stim-dependent
+        
+    case 3; % regression with stim-avr reg before motor regs
+        betas = zeros(nClus,2+length(motorregset)); %size(regressor_s,1)+1);
         for i_clus = 1:nClus,
             regs = vertcat(regressor_s_allclus(i_clus,:),regressor_m);
             %             regs = vertcat(regressor_s_allclus(i_clus,:),regressor_m_allclus(i_clus,:));
@@ -1806,17 +1914,21 @@ switch option
             % plot(regs(i,:)/norm(regs(i,:)),'r');plot(orthonormal_basis(:,i)','k:')
             
             %% Get multi-regression coefficients
-            % FunctionalActivity = beta1*reg1 + beita2*reg2_orth
-            betas(i_clus,:) = C(i_clus,:) * orthonormal_basis;
+            X = [ones(size(orthonormal_basis,1),1),orthonormal_basis];
+            y = C(i_clus,:)';
+            betas(i_clus,:) = regress(y,X)';
+
         end
         % get ranking score: combined motor coeffs
         H = sqrt(sum((betas(:,end-2:end)).^2,2));
     case 4; % regression with motor regs before stim-avr reg
-        betas = zeros(nClus,1+length(motorregset)); %size(regressor_s,1)+1);
+        betas = zeros(nClus,2+length(motorregset)); %size(regressor_s,1)+1);
         for i_clus = 1:nClus,
             regs = vertcat(regressor_m,regressor_s_allclus(i_clus,:));
             orthonormal_basis = Gram_Schmidt_Process(regs');
-            betas(i_clus,:) = C(i_clus,:) * orthonormal_basis;
+            X = [ones(size(orthonormal_basis,1),1),orthonormal_basis];
+            y = C(i_clus,:)';
+            betas(i_clus,:) = regress(y,X)';
         end
         % get ranking score: coeffs of (the single) stim-avr reg
         H = betas(:,end);
@@ -1825,34 +1937,40 @@ end
 %% rank and plot
 [gIX,rankscore] = SortH(H,gIX,numU,'descend');
 
-figure;
-h1 = subplot(2,1,1);
-imagesc(orthonormal_basis);
-title('All orthonormal bases');
-xlabel('orthonormal basis #');
-% make x-lables
-nBases = size(orthonormal_basis,2);
-s = [];
-for i_basis = 1:nBases-3,
-    s = [s,{['stim.' num2str(i_basis)]}];
+% gIX = ceil(gIX/10);
+% rankscore = 
+
+if false,
+    figure;
+    h1 = subplot(2,1,1);
+    imagesc(orthonormal_basis);
+    title('All orthonormal bases');
+    xlabel('orthonormal basis #');
+    % make x-lables
+    nBases = size(orthonormal_basis,2);
+    s = [];
+    for i_basis = 1:nBases-3,
+        s = [s,{['stim.' num2str(i_basis)]}];
+    end
+    s = [s,{'motor.R','motor.L','motor.F'}];
+    h1.XTick = 1:nBases;
+    h1.TickLength = [0,0];
+    h1.XTickLabel = s;
+    h1.XTickLabelRotation = 45;
+    ylabel('time ~ frames');
+    
+    h2 = subplot(2,1,2);
+    imagesc(betas)
+    title('multi-regression coefficients');
+    xlabel('orthonormal basis #');
+    h2.XTick = 1:nBases;
+    h2.TickLength = [0,0];
+    h2.XTickLabel = s;
+    h2.XTickLabelRotation = 45;
+    ylabel('cluster ID');
 end
-s = [s,{'motor.R','motor.L','motor.F'}];
-h1.XTick = 1:nBases;
-h1.TickLength = [0,0];
-h1.XTickLabel = s;
-h1.XTickLabelRotation = 45;
-ylabel('time ~ frames');
 
-h2 = subplot(2,1,2);
-imagesc(betas)
-title('multi-regression coefficients');
-xlabel('orthonormal basis #');
-h2.XTick = 1:nBases;
-h2.TickLength = [0,0];
-h2.XTickLabel = s;
-h2.XTickLabelRotation = 45;
-ylabel('cluster ID');
-
+setappdata(hfig,'betas',betas);
 end
 
 function [gIX,B] = SortH(H,gIX,numU,descend) %#ok<INUSD> % new gIX is sorted based on H, size(H)=[numU,1];
@@ -1893,15 +2011,34 @@ UpdateIndices(hfig,cIX,gIX_);
 RefreshFigure(hfig);
 end
 
-function pushbutton_clrmap_Callback(hObject,~)
+function popup_chooseclrmap_Callback(hObject,~)
+i_clr = get(hObject,'Value');
 hfig = getParentFigure(hObject);
-clrmap = getappdata(hfig,'clrmap');
-if strcmp(clrmap,'jet'),
-    setappdata(hfig,'clrmap','hsv');
-else
-    setappdata(hfig,'clrmap','jet');
+if i_clr==1,
+    setappdata(hfig,'clrmap_name','hsv_new');
+elseif i_clr==2,
+    setappdata(hfig,'clrmap_name','jet');
+elseif i_clr==3,
+    setappdata(hfig,'clrmap_name','greedy_hsv');
+elseif i_clr==4,
+    setappdata(hfig,'clrmap_name','hsv_old');
 end
 RefreshFigure(hfig);
+end
+
+function edit_manualsetnumK_Callback(hObject,~)
+hfig = getParentFigure(hObject);
+cIX = getappdata(hfig,'cIX');
+gIX = getappdata(hfig,'gIX');
+str = get(hObject,'String');
+if ~isempty(str),
+    str = strrep(str,'end',num2str(max(gIX)));
+    numK = ParseRange(str);
+    if numK>=max(gIX),
+        UpdateIndices(hfig,cIX,gIX,numK);
+        RefreshFigure(hfig);
+    end    
+end
 end
 
 %% row 3: Anatomy
@@ -2221,44 +2358,6 @@ end
 
 %% row 2: regression
 
-function regressor = GetRegressor(hObject)
-hfig = getParentFigure(hObject);
-regchoice = getappdata(hfig,'regchoice');
-stim = getappdata(hfig,'stim');
-
-if regchoice{1}==1, % stim Regressor
-    fishset = getappdata(hfig,'fishset');
-    regressors = GetStimRegressor(stim,fishset);
-    if length(regchoice{2})>1,
-        regressor = zeros(length(regchoice{2}),length(regressors(1).im));
-        for i = 1:length(regchoice{2}),
-            regressor(i,:) = regressors(regchoice{2}(i)).im;
-        end
-    else
-        regressor = regressors(regchoice{2}).im;
-    end
-    
-elseif regchoice{1}==2, % motor Regressor
-    behavior = getappdata(hfig,'behavior');
-    regressors = GetMotorRegressor(behavior);
-    regressor = regressors(regchoice{2}).im;
-    
-else % regchoice{1}==3, from Centroid
-    ctrdID = regchoice{2};
-    gIX = getappdata(hfig,'gIX');
-    
-    i = find(unique(gIX)==ctrdID);
-    if isempty(i),
-        disp('input is empty!');beep;
-        regressor = [];
-        return;
-    end
-    C = FindCentroid(hfig);
-    regressor = C(i,:);
-end
-
-end
-
 function pushbutton_thres_regression_Callback(hObject,~)
 disp('regression...');
 hfig = getParentFigure(hObject);
@@ -2443,7 +2542,7 @@ function pushbutton_allCentroidRegression_Callback(hObject,~)
 hfig = getParentFigure(hObject);
 WatchOn(hfig); drawnow;
 [cIX,gIX,numK] = AllCentroidRegression(hfig);
-
+% [cIX,gIX,nMerge1] = AllCentroidRegression_SizeThres_direct(M_0,thres_reg2,Reg,thres_minsize/2);
 UpdateIndices(hfig,cIX,gIX,numK);
 RefreshFigure(hfig);
 disp('all regression complete');
@@ -2488,6 +2587,32 @@ if ~isempty(cIX_),
     UpdateIndices(hfig,cIX_,gIX_,40);
     RefreshFigure(hfig);
 end
+end
+
+function pushbutton_clusterregression_Callback(hObject,~)
+hfig = getParentFigure(hObject);
+isRegIndividualCells = getappdata(hfig,'isRegIndividualCells');
+isRegCurrentCells = getappdata(hfig,'isRegCurrentCells');
+
+WatchOn(hfig);
+[cIX,gIX,numK,IX_regtype,corr_max] = AllRegsRegression(hfig,isRegIndividualCells,isRegCurrentCells);
+WatchOff(hfig);
+
+setappdata(hfig,'IX_regtype',IX_regtype);
+setappdata(hfig,'corr_max',corr_max);
+
+UpdateIndices(hfig,cIX,gIX,numK);
+RefreshFigure(hfig);
+end
+
+function checkbox_isRegIndividualCells_Callback(hObject,~)
+hfig = getParentFigure(hObject);
+setappdata(hfig,'isRegIndividualCells',get(hObject,'Value'));
+end
+
+function checkbox_isRegCurrentCells_Callback(hObject,~)
+hfig = getParentFigure(hObject);
+setappdata(hfig,'isRegCurrentCells',get(hObject,'Value'));
 end
 
 %% row 3: t-tests
@@ -2907,129 +3032,72 @@ function pushbutton_autoclus_Callback(hObject,~)
 hfig = getParentFigure(hObject);
 cIX = getappdata(hfig,'cIX');
 gIX = getappdata(hfig,'gIX');
-M = getappdata(hfig,'M');
 M_0 = getappdata(hfig,'M_0');
-thres_size = 10;
-thres_split = getappdata(hfig,'thres_split');
-thres_stimlock = 1.0;
-thres_merge = getappdata(hfig,'thres_merge');
-thres_silh = 0.4;
-
 isWkmeans = getappdata(hfig,'isWkmeans');
+masterthres = getappdata(hfig,'thres_reg');
+isMakeFoxels = true;
 
-%% kmeans
-if isWkmeans,
-    numK = 20;
-    disp(['kmeans k = ' num2str(numK)]);
-    tic
-    rng('default');% default = 0, but can try different seeds if doesn't converge
-    if numel(M)*numK < 10^7 && numK~=1,
-        disp('Replicates = 5');
-        gIX = kmeans(M,numK,'distance','correlation','Replicates',5);
-    elseif numel(M)*numK < 10^8 && numK~=1,
-        disp('Replicates = 3');
-        gIX = kmeans(M,numK,'distance','correlation','Replicates',3);
-    else
-        gIX = kmeans(M,numK,'distance','correlation');
-    end
-    toc
-    clusgroupID = 2;
-    SaveCluster(hfig,cIX,gIX,'k=20',clusgroupID);
+isAutoclusWithAllCells = getappdata(hfig,'isAutoclusWithAllCells');
+if isAutoclusWithAllCells,
+    cIX_reg = (1:size(M_0,1))';
+else
+    cIX_reg = cIX;
 end
-[gIX, numU] = SqueezeGroupIX(gIX);
 
-%% pushbutton_iter_split(hObject,~);
-disp('iter. split all...');
-I_rest = [];
-iter = 1;
-gIX_last = gIX;
-I_clean_last = cIX;
-cIX = [];
-gIX = [];
-for i = 1:numU,
-    disp(['i = ' num2str(i)]);
-    ix = gIX_last == i;
-    IX = I_clean_last(ix);
-    M_s = M_0(IX,:);
-    [I_rest,cIX,gIX,numU] = CleanClus(M_s,IX,I_rest,cIX,gIX,numU,1-thres_split,thres_size);
-end
-[gIX, ~] = SqueezeGroupIX(gIX);
-if isempty(gIX),
-    errordlg('nothing to display!');
-    return;
-end
-% SaveCluster(hfig,cIX,gIX,['clean_round' num2str(iter)]);
-% SaveCluster(hfig,I_rest,ones(length(I_rest),1),['rest_round' num2str(iter)]);
+WatchOn(hfig);
+[cIX,gIX] = AutoClustering(cIX,gIX,M_0,cIX_reg,isWkmeans,[],...
+    isMakeFoxels,masterthres);
+WatchOff(hfig);
 
-[gIX, numU] = Merge_direct(thres_merge,M_0,cIX,gIX);
-
-%% rank by stim-lock
-disp('stim-lock');
-UpdateIndices(hfig,cIX,gIX,numU);
-[gIX,rankscore] = RankByStimLock_Direct(hfig,gIX,numU);
-disp('ranking complete');
-% and threshold
-IX = find(rankscore<thres_stimlock);
-ix = ismember(gIX,IX);
-gIX = gIX(ix);
-cIX = cIX(ix);
 UpdateIndices(hfig,cIX,gIX);
-
-%% Regression with the centroid of each cluster
-[cIX,gIX,~] = AllCentroidRegression(hfig);
-disp('auto-reg-clus complete');
-
-[gIX, numU] = Merge_direct(thres_merge,M_0,cIX,gIX);
-% SaveCluster(hfig,cIX,gIX,'clean_round2');
-
-%% Silhouette
-% disp('silhouette analysis');
-% gIX_last = gIX;
-% for i = 1:numU,
-%     disp(['i = ' num2str(i)]);
-%     IX = find(gIX_last == i);
-%     cIX_2 = cIX(IX);
-%     M_s = M_0(cIX_2,:);
-%     % try k-means with k=2, see whether to keep
-%     gIX_ = kmeans(M_s,2,'distance','correlation');
-%     silh = silhouette(M_s,gIX_,'correlation');
-%     if mean(silh)>thres_silh,
-%         % keep the k-means k=2 subsplit
-%         disp('split');
-%         gIX(IX) = gIX_ + numU; % reassign (much larger) gIX
-%     end
-% end
-% [gIX, ~] = SqueezeGroupIX(gIX);
-
-%% rank by stim-lock ?? bug?
-% disp('stim-lock');
-% M = M_0(cIX,:);
-% [gIX,rankscore] = RankByStimLock_Direct(hfig,cIX,gIX,M,numU);
-% disp('ranking complete');
-% % and threshold
-% IX = find(rankscore<thres_stimlock);
-% ix = ismember(gIX,IX);
-% gIX = gIX(ix);
-% cIX = cIX(ix);
-%
-% [gIX, ~] = Merge_direct(thres_merge,M_0,cIX,gIX);
-
-% size threshold
-thres_size = getappdata(hfig,'thres_size');
-[cIX, gIX, numU] = ThresSize(cIX,gIX,thres_size);
-
-%% update GUI
-if isempty(gIX),
-    errordlg('nothing to display!');
-    return;
-end
-UpdateIndices(hfig,cIX,gIX,numU);
 RefreshFigure(hfig);
+end
 
-clusgroupID = 3;
-SaveCluster(hfig,cIX,gIX,'clean_round3',clusgroupID);
-beep;
+function pushbutton_makefoxels_Callback(hObject,~)
+hfig = getParentFigure(hObject);
+cIX = getappdata(hfig,'cIX');
+gIX = getappdata(hfig,'gIX');
+M_0 = getappdata(hfig,'M_0');
+isWkmeans = getappdata(hfig,'isWkmeans');
+% absIX = getappdata(hfig,'absIX');
+% i_fish = getappdata(hfig,'i_fish');
+masterthres = getappdata(hfig,'thres_reg');
 
+isAutoclusWithAllCells = getappdata(hfig,'isAutoclusWithAllCells');
+if isAutoclusWithAllCells,
+    cIX_reg = (1:size(M_0,1))';
+else
+    cIX_reg = cIX;
+end
+
+clusParams = struct('merge',masterthres,'cap',masterthres,'reg1',masterthres,...
+    'reg2',masterthres,'minSize',10,'k1',20);
+
+[cIX,gIX] = MakeFoxels(cIX,gIX,M_0,cIX_reg,isWkmeans,clusParams);
+
+% [cIX,gIX] = MakeFoxels(cIX,gIX,M_in,isWkmeans,[],absIX,i_fish);
+
+UpdateIndices(hfig,cIX,gIX);
+RefreshFigure(hfig);
+end
+
+function pushbutton_autoclusfromfoxels_Callback(hObject,~)
+disp('obsolete!');
+% hfig = getParentFigure(hObject);
+% cIX = getappdata(hfig,'cIX');
+% gIX = getappdata(hfig,'gIX');
+% M_0 = getappdata(hfig,'M_0');
+% isWkmeans = getappdata(hfig,'isWkmeans');
+% absIX = getappdata(hfig,'absIX');
+% i_fish = getappdata(hfig,'i_fish');
+% 
+% WatchOn(hfig);
+% isMakeFoxels = false;
+% [cIX,gIX] = AutoClustering(cIX,gIX,M_0,isWkmeans,[],absIX,i_fish,isMakeFoxels);
+% WatchOff(hfig);
+% 
+% UpdateIndices(hfig,cIX,gIX);
+% RefreshFigure(hfig);
 end
 
 function pushbutton_thressize_Callback(hObject,~)
@@ -3097,6 +3165,11 @@ end
 function checkbox_wkmeans_Callback(hObject,~)
 hfig = getParentFigure(hObject);
 setappdata(hfig,'isWkmeans',get(hObject,'Value'));
+end
+
+function checkbox_wAllCells_Callback(hObject,~)
+hfig = getParentFigure(hObject);
+setappdata(hfig,'isAutoclusWithAllCells',get(hObject,'Value'));
 end
 
 %% row 3: Hier. clustering
@@ -3206,6 +3279,46 @@ coeffs = corr(C');%corr(C(1,:)',C(2,:)')
 figure('Position',[1000,200,500,500]);
 isPlotText = (size(C,1)<30);
 CorrPlot(coeffs,isPlotText);
+end
+
+function pushbutton_findartifacts_Callback(hObject,~)
+hfig = getParentFigure(hObject);
+cIX = getappdata(hfig,'cIX');
+gIX = getappdata(hfig,'gIX');
+CellXYZ = getappdata(hfig,'CellXYZ');
+absIX = getappdata(hfig,'absIX');
+[cIX,gIX] = ArtifactAnalysis(cIX,gIX,CellXYZ,absIX);
+if ~isempty(cIX),
+    [gIX,numK] = SqueezeGroupIX(gIX);
+    UpdateIndices(hfig,cIX,gIX,numK);
+    RefreshFigure(hfig);
+else
+    disp('No artifacts found');
+end
+end
+
+function pushbutton_removeartifacts_Callback(hObject,~)
+hfig = getParentFigure(hObject);
+cIX_last = getappdata(hfig,'cIX');
+gIX_last = getappdata(hfig,'gIX');
+CellXYZ = getappdata(hfig,'CellXYZ');
+absIX = getappdata(hfig,'absIX');
+
+[cIX,~] = ArtifactAnalysis(cIX_last,gIX_last,CellXYZ,absIX);
+if isempty(cIX),
+    disp('No artifacts found');
+end
+
+% set-difference
+[cIX,ia] = setdiff(cIX_last,cIX);
+gIX = gIX_last(ia);
+numK = length(unique(gIX));
+
+[gIX, numK] = SqueezeGroupIX(gIX);
+
+UpdateIndices(hfig,cIX,gIX,numK);
+RefreshFigure(hfig);
+
 end
 
 %% ----- tab five ----- (Saved Clusters)
@@ -3456,9 +3569,18 @@ end
 
 %% ----- tab five ----- (Atlas)
 
+function checkbox_showmasks_Callback(hObject,~)
+hfig = getParentFigure(hObject);
+setappdata(hfig,'isShowMasks',get(hObject,'Value'));
+RefreshAnat(hfig);
+end
+
 function pushbutton_findmasks_Callback(hObject,~)
 hfig = getParentFigure(hObject);
 MASKs = getappdata(hfig,'MASKs');
+isFindMaskNorm = getappdata(hfig,'isFindMaskNorm');
+isPlotMskHist = getappdata(hfig,'isPlotMskHist');
+
 % load to shorter variable names
 height = MASKs.height; % 1406;
 width = MASKs.width; % 621;
@@ -3493,50 +3615,55 @@ Z = CellXYZ(absIX(cIX),3);
 
 %%
 pxID = sub2ind([height,width,Zs],X',Y',Z');
-Msk_hist = full(sum(MASKs.MaskDatabase(pxID,:),1));
+% Msk_hist = full(sum(MASKs.MaskDatabase(pxID,:),1));
+Msk_hist_raw = full(sum(MASKs.MaskDatabase(pxID,:),1));
+if isFindMaskNorm,
+    Msk_norm = full(sum(MASKs.MaskDatabase(:,:),1));
+    Msk_hist = Msk_hist_raw./Msk_norm;
+else
+    Msk_hist = Msk_hist_raw;
+end
 
 % choose top hits
 thres_2std = mean(Msk_hist)+2*std(Msk_hist);
 Msk_IDs = find(Msk_hist>thres_2std);
 
 % plot histogram
-figure('Position',[300,600,1000,300]);
-hold on;
-nMasks = length(Msk_hist);
-plot([1,nMasks],[thres_2std/sum(Msk_hist),thres_2std/sum(Msk_hist)],'r:');
-yspace = max(Msk_hist(Msk_IDs)/sum(Msk_hist))/50;
-plot(Msk_IDs,Msk_hist(Msk_IDs)/sum(Msk_hist)+yspace,'r.')
-bar(Msk_hist/sum(Msk_hist),'facecolor',[0.5 0.5 0.5],'edgecolor',[0.5 0.5 0.5]);
-xlim([-1,nMasks+2]);
-xlabel('mask ID');
-ylabel('probability')
-
-% display names in command window
-names = MASKs.MaskDatabaseNames(Msk_IDs);
-names_numbered = cell(size(names));
-disp('Regions:');
-for i = 1:length(names),
-    names_numbered{i} = [num2str(Msk_IDs(i)), ': ', names{i}];
-    disp(names_numbered{i});
+if isPlotMskHist,
+    figure('Position',[300,600,1000,300]);
+    hold on;
+    nMasks = length(Msk_hist);
+    plot([1,nMasks],[thres_2std/sum(Msk_hist),thres_2std/sum(Msk_hist)],'r:');
+    yspace = max(Msk_hist(Msk_IDs)/sum(Msk_hist))/50;
+    plot(Msk_IDs,Msk_hist(Msk_IDs)/sum(Msk_hist)+yspace,'r.')
+    bar(Msk_hist/sum(Msk_hist),'facecolor',[0.5 0.5 0.5],'edgecolor',[0.5 0.5 0.5]);
+    xlim([-1,nMasks+2]);
+    xlabel('mask ID');
+    ylabel('probability')
 end
 
 setappdata(hfig,'Msk_hist',Msk_hist);
 setappdata(hfig,'Msk_IDs',Msk_IDs);
 setappdata(hfig,'Msk_IDlist',Msk_IDs);
 
+% display
+names_numbered = DisplayMaskNames(Msk_IDs,MASKs); % display in debug
 global hmasklistbox;
 set(hmasklistbox,'String',names_numbered);
-
-RefreshFigure(hfig);
+RefreshAnat(hfig);
 end
 
-function checkbox_showmasks_Callback(hObject,~)
+function checkbox_normMskSize_Callback(hObject,~)
 hfig = getParentFigure(hObject);
-setappdata(hfig,'isShowMasks',get(hObject,'Value'));
-RefreshFigure(hfig);
+setappdata(hfig,'isFindMaskNorm',get(hObject,'Value'));
 end
 
-function edit_chooseMskID_Callback(hObject,~)
+function checkbox_isplotMskhist_Callback(hObject,~)
+hfig = getParentFigure(hObject);
+setappdata(hfig,'isPlotMskHist',get(hObject,'Value'));
+end
+
+function edit_chooseMskIDtodraw_Callback(hObject,~)
 hfig = getParentFigure(hObject);
 MASKs = getappdata(hfig,'MASKs');
 nMasks = size(MASKs.MaskDatabase,2);
@@ -3545,9 +3672,11 @@ str = get(hObject,'String');
 if ~isempty(str),
     str = strrep(str,'end',num2str(nMasks));
     range = ParseRange(str);
-    
+    Msk_IDs = range;
     setappdata(hfig,'Msk_IDs',range);
-    RefreshFigure(hfig);
+    RefreshAnat(hfig);
+        
+    DisplayMaskNames(Msk_IDs,MASKs); % display in debug
 end
 end
 
@@ -3557,13 +3686,81 @@ Msk_IDlist = getappdata(hfig,'Msk_IDlist');
 % names = get(hObject,'String');
 IX = get(hObject,'Value');
 setappdata(hfig,'Msk_IDs',Msk_IDlist(IX));
-RefreshFigure(hfig);
+RefreshAnat(hfig);
 end
 
 function checkbox_showmskoutline_Callback(hObject,~)
 hfig = getParentFigure(hObject);
 setappdata(hfig,'isShowMskOutline',get(hObject,'Value'));
-RefreshFigure(hfig);
+RefreshAnat(hfig);
+end
+
+function edit_chooseMskIDtoscreen_Callback(hObject,~)
+hfig = getParentFigure(hObject);
+MASKs = getappdata(hfig,'MASKs');
+CellXYZ_norm = getappdata(hfig,'CellXYZ_norm');
+isScreenMskFromAllCells = getappdata(hfig,'isScreenMskFromAllCells');
+absIX = getappdata(hfig,'absIX');
+
+if ~isScreenMskFromAllCells,
+    cIX = getappdata(hfig,'cIX');
+    gIX = getappdata(hfig,'gIX');
+else
+    cIX = (1:length(absIX))';
+    gIX = ones(size(cIX));
+end
+
+% get/format input
+nMasks = size(MASKs.MaskDatabase,2);
+str = get(hObject,'String');
+if ~isempty(str),
+    str = strrep(str,'end',num2str(nMasks));
+    range = ParseRange(str);
+    Msk_IDs = range;
+    setappdata(hfig,'Msk_IDs',range);
+    
+    if range ~=0,
+        [cIX,gIX] = ScreenCellsWithMasks(Msk_IDs,cIX,gIX,MASKs,CellXYZ_norm,absIX);
+    else
+        newMask = getappdata(hfig,'newMask');
+        % convert cell locations to pixel ID
+        X = CellXYZ_norm(absIX(cIX),1);
+        Y = CellXYZ_norm(absIX(cIX),2);
+        Z = CellXYZ_norm(absIX(cIX),3);
+        pxID = sub2ind([MASKs.height,MASKs.width,MASKs.Zs],X',Y',Z');
+        
+        % screen cells
+        px_hist = full(sum(newMask,2));
+        IX = ismember(pxID,find(px_hist));
+        cIX = cIX(IX);
+        gIX = gIX(IX);
+    end
+    
+    UpdateIndices(hfig,cIX,gIX);
+    RefreshFigure(hfig);
+    
+%   DisplayMaskNames(Msk_IDs,MASKs); % display in debug
+end
+end
+
+function checkbox_screenMskFromAllCells_Callback(hObject,~)
+hfig = getParentFigure(hObject);
+setappdata(hfig,'isScreenMskFromAllCells',get(hObject,'Value'));
+RefreshAnat(hfig);
+end
+
+function pushbutton_makenewmask_Callback(hObject,~)
+hfig = getParentFigure(hObject);
+anat_stack_norm = getappdata(hfig,'anat_stack_norm');
+CellXYZ_norm = getappdata(hfig,'CellXYZ_norm');
+absIX = getappdata(hfig,'absIX');
+cIX = getappdata(hfig,'cIX');
+
+newMask = MakeFunctionalMask(anat_stack_norm,CellXYZ_norm,absIX,cIX);
+setappdata(hfig,'newMask',newMask);
+setappdata(hfig,'Msk_IDs',0);
+setappdata(hfig,'isShowMasks',1);
+RefreshAnat(hfig);
 end
 
 %% Internal functions
@@ -3650,7 +3847,8 @@ cIX_abs = ClusGroup(clusID).cIX_abs;
 [~,cIX] = ismember(cIX_abs,absIX);
 
 if ~isempty(find(cIX==0,1)),
-    errordlg('cell index out of bound for currently loaded dataset');
+    disp('ERROR: cell index out of bound for currently loaded dataset');
+%     errordlg('cell index out of bound for currently loaded dataset');
     IX = cIX==0;
     cIX(IX) = [];
     gIX(IX) = [];
@@ -3705,6 +3903,12 @@ if ~exist('cIX','var'),
     cIX = getappdata(hfig,'cIX');
 end
 
+if isempty(gIX),
+    disp('empty set!');
+%     errordlg('empty set!');
+    return;
+end
+
 % update cache
 bC = getappdata(hfig,'bCache');
 cIX_last = getappdata(hfig,'cIX');
@@ -3749,16 +3953,33 @@ if opID ~= 0,
             [IX,ia] = setdiff(cIX_last,cIX);
             ib = [];
         case 5,
-            disp('setxor');
-            [IX,ia,ib] = setxor(cIX_last,cIX);
+            disp('parent full clus');
+            cIX_parent = cIX;
+            gIX_parent = gIX;
+            [IX,ia,~] = intersect(cIX_parent,cIX_last);
+%             numK = length(unique(gIX_last));
+            U = unique(gIX_parent(ia));
+            gIX = [];
+            cIX = [];
+            for i_U = 1:length(U),
+                ix = find(gIX_parent==U(i_U));
+                gIX = [gIX;gIX_parent(ix)];
+                cIX = [cIX;cIX_parent(ix)];
+            end
         case 6,
-            disp('smartUnion');
-            CIX = vertcat(cIX_last,cIX);
-            GIX = [gIX_last;gIX+max(gIX_last)]; % gIX to match
-            M_0 = getappdata(hfig,'M_0');
-            [cIX,gIX,numK] = SmartUnique(CIX,GIX,M_0(CIX,:));
+            disp('rev full clus'); % cIX_last is the parent set
+            [IX,ia,~] = intersect(cIX_last,cIX);
+%             numK = length(unique(gIX_last));
+            U = unique(gIX_last(ia));
+            gIX = [];
+            cIX = [];
+            for i_U = 1:length(U),
+                ix = find(gIX_last==U(i_U));
+                gIX = [gIX;gIX_last(ix)];
+                cIX = [cIX;cIX_last(ix)];
+            end
     end
-    if opID<6,
+    if opID<5,
         if ~isempty(IX),
             cIX = IX;
             gIX = vertcat(gIX_last(ia),gIX(ib)+max(gIX_last(ia)));
@@ -3804,15 +4025,29 @@ elseif isWeighAlpha == 100,
     setappdata(hfig,'isWeighAlpha',0);
 end
 
-% FindCentroid reset:
-setappdata(hfig,'Centroids',[]);
-setappdata(hfig,'D_ctrd',[]);
 end
 
 % frequently used, 2 plotting functions are outside ('DrawTimeSeries.m' and 'DrawCellsOnAnatProj.m')
 function RefreshFigure(hfig)
+% optional: skip this function by pressing (holding) the 'f' key
+isFreezeUpdate = getappdata(hfig,'isFreezeUpdate');
+if isFreezeUpdate,
+    return;
+end
+
+%% double-check if cIX is valid
+cIX = getappdata(hfig,'cIX');
+if isempty(cIX),
+    errordlg('empty set!');
+%     % GO BACK to the last step (presumably not empty)
+%     pushbutton_back_Callback(h1); % using h1 instaed of the usual 'hObject'
+    return;
+end
+
+%%
 WatchOn(hfig); drawnow;
 isPopout = 0; % with down-sampling in plots
+setappdata(hfig,'isPopout',0);
 
 % clean-up canvas
 allAxesInFigure = findall(hfig,'type','axes');
@@ -3830,68 +4065,64 @@ isRefAnat = getappdata(hfig,'isRefAnat');
 isPlotLines = 0; %getappdata(hfig,'isPlotLines');
 isPlotBehavior = 1; %getappdata(hfig,'isPlotBehavior');
 
+% left subplot
+axes(h1);
+cIX = getappdata(hfig,'cIX');
+gIX = getappdata(hfig,'gIX');
+if length(unique(gIX))<500,
+    DrawTimeSeries(hfig,cIX,gIX,h1,isPopout,isCentroid,isPlotLines,isPlotBehavior);
+else
+    errordlg('too many clusters to display!');
+end
+
+% right subplot
+axes(h2);
+% if length(unique(gIX))<500,
+I = LoadCurrentFishForAnatPlot(hfig);
+DrawCellsOnAnat(I);
+%     DrawCellsOnAnatProj(hfig,isRefAnat,isPopout);
+% end
+WatchOff(hfig);
+end
+
+function RefreshAnat(hfig)
+global hshowrefanat;
+isRefAnat = getappdata(hfig,'isRefAnat');
+if isRefAnat == 0,
+    setappdata(hfig,'isRefAnat',1);
+    RefreshFigure(hfig);    
+    set(hshowrefanat,'Value',1);
+    return;
+end
+
 % double-check if cIX is valid
 cIX = getappdata(hfig,'cIX');
 if isempty(cIX),
     errordlg('empty set!');
-    % GO BACK to the last step (presumably not empty)
-    pushbutton_back_Callback(h1); % using h1 instaed of the usual 'hObject'
+%     % GO BACK to the last step (presumably not empty)
+%     pushbutton_back_Callback(h1); % using h1 instaed of the usual 'hObject'
     return;
 end
 
-% left subplot
-axes(h1);
-DrawTimeSeries(hfig,h1,isPopout,isCentroid,isPlotLines,isPlotBehavior);
+%%
+WatchOn(hfig); drawnow;
+isPopout = 0; % with down-sampling in plots
 
+figure(hfig);
+h2 = axes('Position',[0.63, 0.04, 0.35, 0.83]);
 % right subplot
 axes(h2);
 DrawCellsOnAnatProj(hfig,isRefAnat,isPopout);
 WatchOff(hfig);
 end
 
-function UpdateTimeIndex(hfig,isSkipcIX) %#ok<INUSD>
-% input params
-isAvr = getappdata(hfig,'isAvr');
-isRawtime = getappdata(hfig,'isRawtime');
-stimrange = getappdata(hfig,'stimrange');
-% load
-timelists = getappdata(hfig,'timelists');
-periods = getappdata(hfig,'periods');
-fishset = getappdata(hfig,'fishset');
-
-if fishset == 1,
-    if isAvr,
-        tIX = 1:periods;
-    else
-        tIX = timelists{1};
-    end
-    
-else % fishset>1,
-    if isAvr,
-        tIX = [];
-        for i = 1:length(stimrange),
-            ix = stimrange(i);
-            i_start = sum(periods(1:ix-1)); % if ix-1<1, sum = 0
-            tIX = horzcat(tIX,(i_start+1:i_start+periods(ix)));
-            %             tIX = vertcat(tIX,(i_start+1:i_start+periods(ix))');
-        end
-    else % full range
-        if ~isRawtime,
-            tIX = cat(2, timelists{stimrange});
-        else
-            tIX = sort(cat(2, timelists{stimrange}));
-        end
-    end
-end
-
-setappdata(hfig,'tIX',tIX);
-
-% set Matrices to hold time-series
-M_0 = GetTimeIndexedData(hfig,'isAllCells');
-setappdata(hfig,'M_0',M_0);
-if ~exist('isSkipcIX','var'),
-    cIX = getappdata(hfig,'cIX');
-    setappdata(hfig,'M',M_0(cIX,:));
+function KeyPressCallback(hfig, event)
+if strcmp(event.Key,'f'),
+    setappdata(hfig,'isFreezeUpdate',true);
+    disp('freeze update');
+elseif strcmp(event.Key,'t'),
+    setappdata(hfig,'isFreezeUpdate',false);
+    disp('thaw');
 end
 end
 

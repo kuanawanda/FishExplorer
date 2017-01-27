@@ -1,95 +1,115 @@
-function [cIX,gIX] = AutoClustering(cIX,gIX,absIX,i_fish,M_0,isWkmeans,numK2)
+function [cIX,gIX] = AutoClustering(cIX,gIX,M_0,cIX_reg,isWkmeans,clusParams,isMakeFoxels,masterthres)%,isAutoclusWithAllCells)
+% [cIX,gIX] = AutoClustering(cIX,gIX,M_0,isWkmeans,clusParams,absIX,i_fish,isMakeFoxels,masterthres,isAutoclusWithAllCells)
+% automatically cluster all cells, starting with the currently selected
+% cells
+
 %% set params
-% correlation coeff
-thres_reg2 = 0.7;
-thres_reg = 0.7; 
-thres_merge = 0.6; 
-thres_cap = 0.6; 
-thres_minsize = 10; % number of cells
-%%
-M = M_0(cIX,:);
+% default:
+if ~exist('isWkmeans','var'),
+    isWkmeans = false;
+end
+if ~exist('isMakeFoxels','var'),
+    isMakeFoxels = true;
+end
+if ~exist('masterthres','var'),
+    masterthres = 0.7;
+end
+% if ~exist('isAutoclusWithAllCells','var'),
+%     isAutoclusWithAllCells = true;
+% end
 
-%% 1. Obtain 'supervoxels'
-
-%% 1.1. kmeans (2-step)
-% step 1:
+thres_reg2 = masterthres;
+thres_reg = masterthres;
+thres_merge = masterthres;
+thres_cap = masterthres;
+thres_minsize = 10;
 numK1 = 20;
-if isWkmeans,
-    disp(['kmeans k = ' num2str(numK1)]);
-    tic
-    rng('default');% default = 0, but can try different seeds if doesn't converge
-    if numel(M)*numK1 < 10^7 && numK1~=1,
-        disp('Replicates = 5');
-        gIX = kmeans(M,numK1,'distance','correlation','Replicates',5);
-    elseif numel(M)*numK1 < 10^8 && numK1~=1,
-        disp('Replicates = 3');
-        gIX = kmeans(M,numK1,'distance','correlation','Replicates',3);
+
+isShowProgress = 1;
+
+% optional override:
+if exist('clusParams','var'),
+    if ~isempty(clusParams),        
+        thres_merge = clusParams.merge; % correlation coeff
+        thres_cap = clusParams.cap; % correlation coeff
+        thres_reg2 = clusParams.reg2; % correlation coeff
+        thres_minsize = clusParams.minSize; % number of cells
+        
+        isShowProgress = 0;
     else
-        gIX = kmeans(M,numK1,'distance','correlation');
+        clusParams = struct('merge',thres_merge,'cap',thres_cap,'reg1',thres_reg,...
+            'reg2',thres_reg2,'minSize',thres_minsize,'k1',numK1);
     end
-    toc
 else
-    [gIX, numK1] = SqueezeGroupIX(gIX);
+    clusParams = struct('merge',thres_merge,'cap',thres_cap,'reg1',thres_reg,...
+            'reg2',thres_reg2,'minSize',thres_minsize,'k1',numK1);
 end
 
-% step 2: divide the above clusters again
-% numK2 = 20;
-disp(['2nd tier kmeans k = ' num2str(numK2)]);
+%%
+autoClusStart = tic;
 
-gIX_old = gIX;
-for i = 1:numK1,
-    IX = find(gIX_old == i);
-    M_sub = M_0(IX,:);
-    rng('default');
-    if numK2<length(IX),
-        [gIX_sub,C] = kmeans(M_sub,numK2,'distance','correlation');
-    else
-        [gIX_sub,C] = kmeans(M_sub,length(IX),'distance','correlation');
-    end
-    gIX(IX) = (i-1)*numK2+gIX_sub;
+if isMakeFoxels,
+    %% 1. Obtain foxels (functional voxels)
+    [cIX,gIX] = MakeFoxels(cIX,gIX,M_0,cIX_reg,isWkmeans,clusParams);%absIX,i_fish);
 end
 
-%% 1.2. Regression with the centroid of each cluster
-disp('regression with all clusters');
-tic
-Reg = FindCentroid_Direct(gIX,M);
-[cIX,gIX,~] = AllCentroidRegression_direct(M_0,thres_reg,Reg);
-gIX = SqueezeGroupIX(gIX);
-toc
-% clusgroupID = 1;
-% SaveCluster_Direct(cIX,gIX,absIX,i_fish,'k20x20_reg',clusgroupID);
-%% size thresholding
+%% 2. Merge foxels to obtain fROI's (functional ROI's)
+if isShowProgress,
+    disp('Merge foxels (round 1)');
+end
+grow1Start = tic;
+M = M_0(cIX,:);
+gIX = GrowClustersFromSeedsItr(thres_merge,thres_cap,thres_minsize,gIX,M);
+grow1Time = toc(grow1Start);
+
+% Regression with the centroid of each cluster (round 1)
+reg1Start = tic;
+Reg = FindCentroid_Direct(gIX,M_0(cIX,:));
+[cIX,gIX,nMerge1] = AllCentroidRegression_SizeThres_direct(M_0(cIX_reg,:),cIX_reg,thres_reg2,Reg,thres_minsize/2);
+reg1Time = toc(reg1Start);
+
+if isShowProgress,
+    disp('Merge foxels (round 2)');
+end
+
+grow2Start = tic;
+M = M_0(cIX,:);
+gIX = GrowClustersFromSeedsItr(thres_merge,thres_cap,thres_minsize,gIX,M);
+grow2Time = toc(grow2Start);
+
+reg2Start = tic;
+Reg = FindCentroid_Direct(gIX,M_0(cIX,:));
+[cIX,gIX,nMerge2] = AllCentroidRegression_SizeThres_direct(M_0(cIX_reg,:),cIX_reg,thres_reg2,Reg,thres_minsize);
+reg2Time = toc(reg2Start);
+
+% clusgroupID = 2;
+% SaveCluster_Direct(cIX,gIX,absIX,i_fish,'afterGrowth',clusgroupID);
+
+%% 
 U = unique(gIX);
 numU = length(U);
 for i=1:numU,
-    if length(find(gIX==U(i)))<thres_minsize/2,
+    if length(find(gIX==U(i)))<thres_minsize,
         cIX(gIX==U(i)) = [];
         gIX(gIX==U(i)) = [];
     end
 end
-[gIX,numU] = SqueezeGroupIX(gIX);
-disp(numU);
-%% Find Seed
-tic
-[cIX,gIX] = GrowClustersFromSeedsItr(thres_merge,thres_cap,thres_minsize,thres_reg2,cIX,gIX,M_0);
-toc
-%%
-if isempty(gIX),
-    errordlg('nothing to display!');
-    return;
-end
-%% Regression again
-% C = FindCentroid_Direct(gIX,M_0(cIX,:));
-% [cIX,gIX,~] = AllCentroidRegression_direct(M_0,thres_reg2,C);
 
-%% update GUI
 C = FindCentroid_Direct(gIX,M_0(cIX,:));
 gIX = HierClus_Direct(C,gIX);
+[gIX,numROI] = SqueezeGroupIX(gIX);
 
-clusgroupID = 3;
-clusID = SaveCluster_Direct(cIX,gIX,absIX,i_fish,'fromSeed_thres',clusgroupID);
-% f.RefreshFigure(hfig);
-UpdateClustersGUI_Direct(clusgroupID,clusID,i_fish)
+%% report timing etc
+autoClusTime = toc(autoClusStart);
 
-toc
+disp(['(Size) nMerge1:' num2str(nMerge1) ...
+    ' nMerge2:' num2str(nMerge2) ...
+    ' nROI:' num2str(numROI) ]);
+
+disp(['(Time) grow1:' num2str(grow1Time)...
+    ' reg1:' num2str(reg1Time) ...
+    ' grow2:' num2str(grow2Time)...
+    ' reg2:' num2str(reg2Time) ...
+    ' total time:' num2str(autoClusTime) ' sec']);
+
 end

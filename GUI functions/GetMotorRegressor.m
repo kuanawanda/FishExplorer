@@ -1,9 +1,18 @@
-function regressors = GetMotorRegressor(behavior)
+function [regressors,name_array,M_regressor,name_array_short] = GetMotorRegressor(behavior,i_fish)
+% M_regressor is only for 3 channels - the extracted turns, without the 2
+% raw signal channels
+
 %% generate GCaMP6f kernel
 % GCaMP6f: decay half-time: 400±41; peak: 80±35
 % GCaMP6s: 1796±73, 480±24
 
-fpsec = 1.97;
+if ~exist('i_fish','var'),
+    fpsec = 1.97; % should import from data...
+    disp('fpsec missing, using default 1.97');
+else
+    fpsec = GetFishFreq(i_fish);
+%     disp(['fpsec = ',num2str(fpsec)]);
+end
 
 tlen=size(behavior,2);
 t=0:0.05:8; % sec
@@ -30,14 +39,14 @@ t_gc6=0:0.05:tlen; % sec
 %     turn(:,14)  = fltCh2;                                            %analog: right channel   
 regressor_0={ % rows = [7,8,9,13,14];
     behavior(1,:);   %weighted: left turns
-    behavior(2,:);   %weighted: right turns
-    behavior(3,:);   %weighted: forward swims
+    behavior(3,:);   %weighted: forward turns
+    behavior(2,:);   %weighted: right swims
     behavior(4,:);  %analog: left channel
     behavior(5,:);  %analog: right channel   
     behavior(4,:)+behavior(5,:);   %analog: average
     };
 nRegType = length(regressor_0);
-name_array = {'w_right','w_left','w_fwd','raw_right','raw_left','raw_all'};
+name_array = {'motor-left','motor-fwd','motor-right','raw_right','raw_left','raw_all'};
 
 % segment length and round off, for shuffled control
 segLength = floor(tlen/80);
@@ -75,6 +84,14 @@ for j=1:nRegType, %run_StimRegType_subset,
     end
 end
 
+%% dense format
+range_motorreg = [1,2,3];
+M_regressor = zeros(length(range_motorreg),length(regressors(1).im));
+for i = 1:length(range_motorreg),
+    M_regressor(i,:) = regressors(range_motorreg(i)).im;
+end
+
+name_array_short = name_array(range_motorreg);
 end
 
 function reg_im = gen_reg_im(gc6, t_gc6, t_im, reg)
