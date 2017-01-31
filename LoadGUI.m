@@ -7,7 +7,7 @@ clear all;close all;clc
 % scriptName = mfilename('fullpath');
 % [currentpath, filename, fileextension]= fileparts(scriptName);
 % code_dir = currentpath;
-code_dir = 'C:\Users\Xiu\Dropbox (Personal)\FishExplorer2';
+code_dir = 'C:\FishExplorer';
 addpath(genpath(code_dir));
 
 % check that main data directory is correct in function'GetCurrentDataDir'
